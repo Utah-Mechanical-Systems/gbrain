@@ -60,8 +60,12 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
   // — safe to interpolate into raw SQL.
   const ftsLang = getFtsLanguage();
   const tsq = `websearch_to_tsquery('${ftsLang}', gbrain_fts_input($1))`;
-  const matchSql = safeChunks ? `p.search_vector @@ ${WEIGHT_A_QUERY(ftsLang)}` : `p.search_vector @@ ${tsq}`;
-  const rankSql = safeChunks ? `ts_rank_cd(ts_filter(p.search_vector, '{a}'), ${tsq})` : `ts_rank_cd(p.search_vector, ${tsq})`;
+  // Both arms match and rank the title (weight A) only. Matching the whole
+  // vector let body/timeline lexemes ('2026' on every dated page) pull ~16k
+  // pages into ts_rank_cd on an OR fallback (4.1 s vs 1.3 s title-only);
+  // body text is the keyword arm's job.
+  const matchSql = `p.search_vector @@ ${WEIGHT_A_QUERY(ftsLang)}`;
+  const rankSql = `ts_rank_cd(ts_filter(p.search_vector, '{a}'), ${tsq})`;
 
   const params: unknown[] = [boundWebsearchQuery(query), normalizeAlias(query), limit, offset];
   let filters = '';

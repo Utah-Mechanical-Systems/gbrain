@@ -358,17 +358,22 @@ export function boundWebsearchQuery(raw: string): string {
  *     so operator queries get no fallback at all.
  * Tokenization splits on non-alphanumeric runs (Unicode-aware). Literal
  * OR/AND words are dropped so they can't be re-parsed as operators
- * mid-list.
+ * mid-list. Repeated words are dropped (case-insensitive, first spelling
+ * kept): a lexeme repeated in an OR tsquery made `ts_rank_cd` ~8x slower
+ * over a 16k-page match set (3.5 s vs 0.5 s), and ranking is identical.
  */
 export function buildOrFallbackWebsearchQuery(query: string): string | null {
   // F3 operator guard: any double quote, or a dash LEADING a token
   // (whitespace/start boundary — interior hyphens like "foo-bar" are fine).
   if (query.includes('"') || /(^|\s)-\S/.test(query)) return null;
+  const seen = new Set<string>();
+  // NOTE: exact-word dedupe only; stem twins (task/tasks) still repeat a lexeme. Dedupe in SQL if those show up slow.
   const tokens = query
     .normalize('NFKC')
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
-    .filter(t => { const u = t.toUpperCase(); return u !== 'OR' && u !== 'AND'; });
+    .filter(t => { const u = t.toUpperCase(); return u !== 'OR' && u !== 'AND'; })
+    .filter(t => { const k = t.toLowerCase(); return !seen.has(k) && !!seen.add(k); });
   if (tokens.length < 2) return null;
   return tokens.join(' OR ');
 }

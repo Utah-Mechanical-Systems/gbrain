@@ -182,6 +182,26 @@ describe('searchTitles — D1 title candidate arm', () => {
     const hits = await engine.searchTitles('Zanzibar Protocol Manifest', { limit: 10 });
     expect(hits.map(r => r.slug)).not.toContain('test/hidden-fixture');
   });
+
+  test('matches the title only: timeline text (weight C) is not a title hit', async () => {
+    await engine.putPage('people/dated-entity', {
+      type: 'person',
+      title: 'Cobalt Meridian Atlas',
+      compiled_truth: 'unrelated body',
+      timeline: '- 2026-10-07: zircon quarry visit',
+    });
+    await installFixtureChunks(engine, 'people/dated-entity', [
+      { chunk_index: 0, chunk_text: 'unrelated body', chunk_source: 'compiled_truth' },
+    ]);
+    // Premise: the timeline lexeme is in the page's search_vector (weight C).
+    const inVector = await (engine as any).db.query(
+      `SELECT search_vector @@ to_tsquery('english', 'zircon') AS hit FROM pages WHERE slug = 'people/dated-entity'`,
+    );
+    expect(inVector.rows[0].hit).toBe(true);
+
+    expect((await engine.searchTitles('zircon quarry', { limit: 10 })).map(r => r.slug)).not.toContain('people/dated-entity');
+    expect((await engine.searchTitles('Cobalt Meridian', { limit: 10 })).map(r => r.slug)).toContain('people/dated-entity');
+  });
 });
 
 describe('searchKeyword — D2 AND→OR fallback', () => {
@@ -304,6 +324,12 @@ describe('buildOrFallbackWebsearchQuery — pure', () => {
     expect(buildOrFallbackWebsearchQuery('alpha AND beta')).toBe('alpha OR beta');
     // Only operator words survive tokenization → nothing left to relax.
     expect(buildOrFallbackWebsearchQuery('or and')).toBeNull();
+  });
+  test('drops repeated words (case-insensitive): a repeated lexeme makes ts_rank_cd ~8x slower', () => {
+    expect(buildOrFallbackWebsearchQuery('Amber Idle Lantern idle tab')).toBe('Amber OR Idle OR Lantern OR tab');
+    expect(buildOrFallbackWebsearchQuery('test workers ACME_TEST_WORKERS')).toBe('test OR workers OR ACME');
+    // Only repeats of one word left → nothing to relax.
+    expect(buildOrFallbackWebsearchQuery('alpha ALPHA')).toBeNull();
   });
 });
 
